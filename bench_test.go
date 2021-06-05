@@ -1,8 +1,7 @@
 package main
 
 import (
-	"io/ioutil"
-	"os"
+	"fmt"
 	"testing"
 
 	"github.com/nakabonne/tstorage"
@@ -10,41 +9,84 @@ import (
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
-func BenchmarkStorage_Insert(b *testing.B) {
-	tmpDir, err := ioutil.TempDir("", "tstorage-bench")
-	require.NoError(b, err)
-	defer os.RemoveAll(tmpDir)
-
+func BenchmarkStorage_InsertParallel(b *testing.B) {
+	tmpDir := b.TempDir()
 	storage, err := tstorage.NewStorage(
 		tstorage.WithDataPath(tmpDir),
+		tstorage.WithTimestampPrecision(tstorage.Seconds),
 	)
 	require.NoError(b, err)
+	defer storage.Close()
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			err := storage.InsertRows([]tstorage.Row{
+				{Metric: "metric1", DataPoint: tstorage.DataPoint{Timestamp: int64(i), Value: 0.1}},
+			})
+			require.NoError(b, err)
+			i++
+		}
+	})
+}
+
+func BenchmarkLevelDB_InsertParallel(b *testing.B) {
+	tmpDir := b.TempDir()
+	db, err := leveldb.OpenFile(tmpDir, nil)
+	require.NoError(b, err)
+	defer db.Close()
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			err := db.Put(
+				[]byte(fmt.Sprintf("%d-metric1", i)),
+				[]byte("0.1"),
+				nil,
+			)
+			require.NoError(b, err)
+			i++
+		}
+	})
+}
+
+func BenchmarkStorage_Insert(b *testing.B) {
+	//tmpDir := b.TempDir()
+	storage, err := tstorage.NewStorage()
+	require.NoError(b, err)
+	defer storage.Close()
+
 	b.ResetTimer()
 	for i := 1; i < b.N; i++ {
-		storage.InsertRows([]tstorage.Row{
+		err := storage.InsertRows([]tstorage.Row{
 			{Metric: "metric1", DataPoint: tstorage.DataPoint{Timestamp: int64(i), Value: 0.1}},
 		})
+		require.NoError(b, err)
 	}
 }
 
 func BenchmarkLevelDB_Insert(b *testing.B) {
-	tmpDir, err := ioutil.TempDir("", "tstorage-bench")
-	require.NoError(b, err)
-	defer os.RemoveAll(tmpDir)
-
+	tmpDir := b.TempDir()
 	db, err := leveldb.OpenFile(tmpDir, nil)
 	require.NoError(b, err)
 	defer db.Close()
 
 	b.ResetTimer()
 	for i := 1; i < b.N; i++ {
+		err := db.Put(
+			[]byte(fmt.Sprintf("%d-metric1", i)),
+			[]byte("0.1"),
+			nil,
+		)
+		require.NoError(b, err)
 	}
 }
 
+/*
 func BenchmarkTstorage_Select(b *testing.B) {
-	tmpDir, err := ioutil.TempDir("", "tstorage-bench")
-	require.NoError(b, err)
-	defer os.RemoveAll(tmpDir)
+	tmpDir := b.TempDir()
 
 	storage, err := tstorage.NewStorage(
 		tstorage.WithDataPath(tmpDir),
@@ -60,3 +102,4 @@ func BenchmarkTstorage_Select(b *testing.B) {
 		_, _ = storage.Select("metric1", nil, 10, 100)
 	}
 }
+*/
